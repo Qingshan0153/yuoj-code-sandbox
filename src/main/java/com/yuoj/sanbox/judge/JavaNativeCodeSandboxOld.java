@@ -1,6 +1,7 @@
 package com.yuoj.sanbox.judge;
 
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.util.StrUtil;
 import com.yuoj.sanbox.judge.model.ExecuteCodeRequest;
 import com.yuoj.sanbox.judge.model.ExecuteCodeResponse;
@@ -9,9 +10,9 @@ import com.yuoj.sanbox.judge.model.JudgeInfo;
 import com.yuoj.sanbox.utils.ProcessUtil;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,7 +20,7 @@ import java.util.UUID;
  * @author 李京霖
  * @version 2024/3/3 20:54 1.0
  */
-public class JavaNativeCodeSandbox implements CodeSandbox {
+public class JavaNativeCodeSandboxOld implements CodeSandbox {
 
 
     /**
@@ -32,12 +33,38 @@ public class JavaNativeCodeSandbox implements CodeSandbox {
      */
     public static final String GLOBAL_JAVA_CLASS_NAME = "Main.java";
 
-    private static final String SECURITY_MANAGER_PATH = "C:\\code\\yuoj-code-sandbox\\src\\main\\resources\\security";
-
-    private static final String SECURITY_MANAGER_CLASS_NAME = "MySecurityManager";
-
-
     private static final long TIME_OUT = 5000L;
+
+
+    private static final String USER_CODE_PARENT_PATH;
+
+    static {
+        USER_CODE_PARENT_PATH = initPath();
+    }
+
+
+    public static String initPath() {
+        String userDir = System.getProperty("user.dir");
+        String globalCodePathName = userDir + File.separator + GLOBAL_CODE_DIR_NAME;
+        // 判断全局代码目录是否存在,不存在新建
+        if (!FileUtil.exist(globalCodePathName)) {
+            FileUtil.mkdir(globalCodePathName);
+        }
+        // 用户代码隔离存放
+        return globalCodePathName + File.separator + UUID.randomUUID();
+    }
+
+    public static void main(String[] args) {
+        JavaNativeCodeSandboxOld javaNativeCodeSandbox = new JavaNativeCodeSandboxOld();
+        ExecuteCodeRequest executeCodeRequest = new ExecuteCodeRequest();
+        executeCodeRequest.setInputList(Arrays.asList("1 2", "1 3"));
+        String code = ResourceUtil.readStr("testCode/simpleComputeArgs/Main.java", StandardCharsets.UTF_8);
+        executeCodeRequest.setCode(code);
+        executeCodeRequest.setLanguage("java");
+        ExecuteCodeResponse executeCodeResponse = javaNativeCodeSandbox.executeCode(executeCodeRequest);
+        System.out.println(executeCodeResponse);
+    }
+
 
     /**
      * 执行代码
@@ -49,7 +76,6 @@ public class JavaNativeCodeSandbox implements CodeSandbox {
     public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
         List<String> inputList = executeCodeRequest.getInputList();
         String code = executeCodeRequest.getCode();
-        String language = executeCodeRequest.getLanguage();
         String userDir = System.getProperty("user.dir");
         String globalCodePathName = userDir + File.separator + GLOBAL_CODE_DIR_NAME;
 
@@ -75,7 +101,7 @@ public class JavaNativeCodeSandbox implements CodeSandbox {
         // 3. 执行代码，得到输出结果
         List<ExecuteMessage> executeMessageList = new ArrayList<>();
         for (String inputArgs : inputList) {
-            String runCmd = String.format("java -Xmx256m -Dfile.encoding=UTF-8 -cp %s;%s -Djava.security.manager=%s Main %s", userCodeParentPath, SECURITY_MANAGER_PATH, SECURITY_MANAGER_CLASS_NAME, inputArgs);
+            String runCmd = String.format("java -Xmx256m -Dfile.encoding=UTF-8 -cp %s Main %s", userCodeParentPath, inputArgs);
             try {
                 Process runProcess = Runtime.getRuntime().exec(runCmd);
                 // 超时控制
@@ -122,8 +148,6 @@ public class JavaNativeCodeSandbox implements CodeSandbox {
         executeCodeResponse.setOutputList(outputList);
         JudgeInfo judgeInfo = new JudgeInfo();
         judgeInfo.setTime(maxTime);
-        // 要借助第三方库来获取内存占用，非常麻烦，此处不做实现
-//        judgeInfo.setMemory();
 
         executeCodeResponse.setJudgeInfo(judgeInfo);
 

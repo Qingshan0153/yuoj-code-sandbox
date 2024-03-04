@@ -22,7 +22,7 @@ public class DockerUtil {
     /**
      * 连接docker服务器
      *
-     * @return
+     * @return DockerClient
      */
     public static DockerClient connect() {
         // 配置docker CLI的一些选项

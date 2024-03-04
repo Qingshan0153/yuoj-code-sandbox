@@ -75,9 +75,8 @@ public abstract class AbstractJavaCodeSandboxTemplate implements CodeSandbox {
      * 2. 编译代码，得到class文件
      *
      * @param userCodeFile 代码文件
-     * @return ExecuteMessage
      */
-    public ExecuteMessage compileFile(File userCodeFile) {
+    public void compileFile(File userCodeFile) {
         // 编译代码，得到class文件
         String compileCmd = String.format("javac -encoding utf-8 %s", userCodeFile.getAbsolutePath());
         try {
@@ -86,7 +85,6 @@ public abstract class AbstractJavaCodeSandboxTemplate implements CodeSandbox {
             if (executeMessage.getExitValue() != 0) {
                 throw new RuntimeException("编译错误");
             }
-            return executeMessage;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -98,9 +96,10 @@ public abstract class AbstractJavaCodeSandboxTemplate implements CodeSandbox {
      * @return List<ExecuteMessage>
      */
     public List<ExecuteMessage> runCode(File userCodeFile, List<String> inputList) {
+        String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
         List<ExecuteMessage> executeMessageList = new ArrayList<>();
         for (String inputArgs : inputList) {
-            String runCmd = String.format("java -Xmx256m -Dfile.encoding=UTF-8 -cp %s Main %s", USER_CODE_PARENT_PATH, inputArgs);
+            String runCmd = String.format("java -Xmx256m -Dfile.encoding=UTF-8 -cp %s Main %s", userCodeParentPath, inputArgs);
             try {
                 Process runProcess = Runtime.getRuntime().exec(runCmd);
                 // 超时控制
@@ -182,11 +181,10 @@ public abstract class AbstractJavaCodeSandboxTemplate implements CodeSandbox {
     public ExecuteCodeResponse executeCode(ExecuteCodeRequest executeCodeRequest) {
         List<String> inputList = executeCodeRequest.getInputList();
         String code = executeCodeRequest.getCode();
-        String language = executeCodeRequest.getLanguage();
         // 1. 保存用户代码为文件
         File userCodeFile = this.saveCodeToFile(code);
         // 2. 编译代码，得到class文件
-        ExecuteMessage compileFile = this.compileFile(userCodeFile);
+        this.compileFile(userCodeFile);
         // 3. 执行代码，得到输出结果
         List<ExecuteMessage> executeMessageList = this.runCode(userCodeFile, inputList);
         // 4. 收集整理输出结果

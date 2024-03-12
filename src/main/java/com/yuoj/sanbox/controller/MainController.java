@@ -1,14 +1,17 @@
 package com.yuoj.sanbox.controller;
 
+import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.http.HttpRequest;
 import com.yuoj.sanbox.judge.model.ExecuteCodeRequest;
 import com.yuoj.sanbox.judge.model.ExecuteCodeResponse;
+import com.yuoj.sanbox.judge.template.impl.JavaDockerCodeSandbox;
 import com.yuoj.sanbox.judge.template.impl.JavaNativeCodeSandbox;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.nio.charset.StandardCharsets;
 
 /**
  * @author 李京霖
@@ -24,7 +27,7 @@ public class MainController {
      */
     private static final String AUTH_REQUEST_HEADER = "auth";
 
-    private static final String AUTH_REQUEST_SECRET = "secretKey";
+    private static final String AUTH_REQUEST_SECRET = "cB6nU2qD8gY1fE9";
     @Resource
     private JavaNativeCodeSandbox javaNativeCodeSandbox;
 
@@ -35,9 +38,9 @@ public class MainController {
 
     @PostMapping("/execute")
     ExecuteCodeResponse executeCode(@RequestBody ExecuteCodeRequest executeCodeRequest, HttpServletRequest request, HttpServletResponse response) {
-
         String header = request.getHeader(AUTH_REQUEST_HEADER);
-        if (!header.equals(AUTH_REQUEST_SECRET)) {
+        String secretKey = DigestUtil.md5Hex(AUTH_REQUEST_SECRET, StandardCharsets.UTF_8);
+        if (!header.equals(secretKey)) {
             response.setStatus(403);
             return null;
         }

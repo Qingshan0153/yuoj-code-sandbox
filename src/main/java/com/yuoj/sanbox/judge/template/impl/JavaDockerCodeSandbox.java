@@ -6,12 +6,14 @@ import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.*;
 import com.github.dockerjava.api.model.*;
+import com.github.dockerjava.core.DockerClientBuilder;
 import com.github.dockerjava.core.command.ExecStartResultCallback;
 import com.yuoj.sanbox.judge.model.ExecuteCodeRequest;
 import com.yuoj.sanbox.judge.model.ExecuteCodeResponse;
 import com.yuoj.sanbox.judge.model.ExecuteMessage;
 import com.yuoj.sanbox.judge.template.AbstractJavaCodeSandboxTemplate;
 import com.yuoj.sanbox.utils.DockerUtil;
+import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StopWatch;
 
@@ -21,6 +23,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -28,135 +31,150 @@ import java.util.concurrent.TimeUnit;
  * @author 李京霖
  * @version 2024/3/3 20:54 1.0
  */
-@Service
+@Component
 public class JavaDockerCodeSandbox extends AbstractJavaCodeSandboxTemplate {
 
-    private static final long TIME_OUT = 5000L;
+    public static final long TIME_OUT = 10000L;
+
+    // 首次拉取镜像
+    public static final Boolean FIRST_INIT = true;
 
     /**
-     * flag,标记是否第一次初始化
+     * 测试
+     *
+     * @param args
      */
-    private static final Boolean FIRST_INIT = true;
-
-
     public static void main(String[] args) {
-        JavaDockerCodeSandbox javaNativeCodeSandbox = new JavaDockerCodeSandbox();
+        JavaDockerCodeSandbox javaNativeCodeSandBox = new JavaDockerCodeSandbox();
         ExecuteCodeRequest executeCodeRequest = new ExecuteCodeRequest();
         executeCodeRequest.setInputList(Arrays.asList("1 2", "1 3"));
-        String code = ResourceUtil.readStr("testCode/simpleComputeArgs/Main.java", StandardCharsets.UTF_8);
+        String code = ResourceUtil.readStr("testCode/simpleComputedArgs/Main.java", StandardCharsets.UTF_8);
+//        String code = ResourceUtil.readStr("testCode/unsaleCode/RunFileError.java", StandardCharsets.UTF_8);
         executeCodeRequest.setCode(code);
         executeCodeRequest.setLanguage("java");
-        ExecuteCodeResponse executeCodeResponse = javaNativeCodeSandbox.executeCode(executeCodeRequest);
+        ExecuteCodeResponse executeCodeResponse = javaNativeCodeSandBox.executeCode(executeCodeRequest);
         System.out.println(executeCodeResponse);
     }
 
-
     /**
-     * // 3. 执行代码，得到输出结果
+     * 3、创建容器，上传编译文件
      *
-     * @param userCodeFile 编译文件
-     * @param inputList    输入
-     * @return List<ExecuteMessage>
+     * @param userCodeFile
+     * @param inputList
+     * @return
      */
     @Override
     public List<ExecuteMessage> runCode(File userCodeFile, List<String> inputList) {
         String userCodeParentPath = userCodeFile.getParentFile().getAbsolutePath();
-        // 3. 创建容器，把文件复制到容器内
-        // 获取默认的 Docker Client
-        DockerClient dockerClient = DockerUtil.connect();
+        DockerClient dockerClient = DockerClientBuilder.getInstance().build();
+        // 3.1、拉取镜像
         String image = "openjdk:8-alpine";
         if (FIRST_INIT) {
             PullImageCmd pullImageCmd = dockerClient.pullImageCmd(image);
-            PullImageResultCallback pullImageResultCallback = new PullImageResultCallback() {
+            PullImageResultCallback resultCallback = new PullImageResultCallback() {
                 @Override
                 public void onNext(PullResponseItem item) {
-                    System.out.println("下载镜像：" + item.getStatus());
+                    System.out.println("下载拉取镜像中：" + item.getStatus());
                     super.onNext(item);
                 }
             };
             try {
-                pullImageCmd.exec(pullImageResultCallback).awaitCompletion();
+                pullImageCmd.exec(resultCallback).awaitCompletion();
             } catch (InterruptedException e) {
                 System.out.println("拉取镜像异常");
                 throw new RuntimeException(e);
             }
         }
-        System.out.println("下载完成");
-        // 创建容器
+        System.out.println("镜像拉取完成");
+
+        // 3.2、创建容器
         CreateContainerCmd containerCmd = dockerClient.createContainerCmd(image);
         HostConfig hostConfig = new HostConfig();
+        // 限制内存
         hostConfig.withMemory(100 * 1000 * 1000L);
-        hostConfig.withMemorySwap(0L);
+        // 设置CPU
         hostConfig.withCpuCount(1L);
+        // 内存交换
+        hostConfig.withMemorySwap(1000L);
+        // 设置安全管理 读写权限
+        String profileConfig = ResourceUtil.readUtf8Str("profile.json");
+        hostConfig.withSecurityOpts(Arrays.asList("seccomp=" + profileConfig));
+        // 设置容器挂载目录
         hostConfig.setBinds(new Bind(userCodeParentPath, new Volume("/app")));
-        CreateContainerResponse createContainerResponse = containerCmd.withHostConfig(hostConfig).withNetworkDisabled(true).withAttachStdin(true).withAttachStderr(true).withAttachStdout(true).withTty(true).exec();
-        System.out.println(createContainerResponse);
+        CreateContainerResponse createContainerResponse = containerCmd
+                .withReadonlyRootfs(true)
+                .withNetworkDisabled(true) // 禁用网络
+                .withHostConfig(hostConfig)
+                .withAttachStderr(true) // 开启输入输出
+                .withAttachStdin(true)
+                .withAttachStdout(true)
+                .withTty(true) // 开启一个交互终端
+                .exec();
         String containerId = createContainerResponse.getId();
-
-        // 启动容器
+        System.out.println("创建容器id：" + containerId);
+        // 3.3、启动容器
         dockerClient.startContainerCmd(containerId).exec();
-        // 执行命令并获取结果
-        return getExecuteMessages(inputList, dockerClient, containerId);
-    }
 
-    private static List<ExecuteMessage> getExecuteMessages(List<String> inputList, DockerClient dockerClient, String containerId) {
-        // docker exec keen_blackwell java -cp /app Main 1 3
-        // 执行命令并获取结果
-        List<ExecuteMessage> executeMessageList = new ArrayList<>();
+        // 3.4、执行命令 docker exec containtId java -cp /app Main 1 2
+        ArrayList<ExecuteMessage> executeMessageList = new ArrayList<>();
+
+        StopWatch stopWatch = new StopWatch();
+        // 最大内存占用
+        final long[] maxMemory = {0L};
+        // 设置执行消息
+        ExecuteMessage execDockerMessage = new ExecuteMessage();
+        final String[] messageDocker = {null};
+        final String[] errorDockerMessage = {null};
+        long time = 0L;
         for (String inputArgs : inputList) {
-            StopWatch stopWatch = new StopWatch();
             String[] inputArgsArray = inputArgs.split(" ");
-            String[] cmdArray = ArrayUtil.append(new String[]{"java", "-cp", "/app", "Main"}, inputArgsArray);
-            ExecCreateCmdResponse execCreateCmdResponse = dockerClient.execCreateCmd(containerId).withCmd(cmdArray).withAttachStderr(true).withAttachStdin(true).withAttachStdout(true).exec();
-            System.out.println("创建执行命令：" + execCreateCmdResponse);
+            String[] cmdArray = ArrayUtil.append(new String[]{"java", "-cp", "/app", "Main", "1", "2"}, inputArgsArray);
+            ExecCreateCmdResponse execCreateCmdResponse = dockerClient.execCreateCmd(containerId)
+                    .withCmd(cmdArray)
+                    .withAttachStderr(true) // 开启输入输出
+                    .withAttachStdin(true)
+                    .withAttachStdout(true)
+                    .exec();
+            System.out.println("创建执行命令：" + execCreateCmdResponse.getId());
 
-            ExecuteMessage executeMessage = new ExecuteMessage();
-            final String[] message = {null};
-            final String[] errorMessage = {null};
-            long time = 0L;
-            // 判断是否超时
-            final boolean[] timeout = {true};
             String execId = execCreateCmdResponse.getId();
+            // 判断超时变量
+            final boolean[] isTimeOut = {true};
+            if (execId == null) {
+                throw new RuntimeException("执行命令不存在");
+            }
             ExecStartResultCallback execStartResultCallback = new ExecStartResultCallback() {
+
                 @Override
                 public void onComplete() {
-                    // 如果执行完成，则表示没超时
-                    timeout[0] = false;
+                    // 执行完成，设置为 false 不超时
+                    isTimeOut[0] = false;
                     super.onComplete();
                 }
 
                 @Override
                 public void onNext(Frame frame) {
+                    // 获取程序执行信息
                     StreamType streamType = frame.getStreamType();
                     if (StreamType.STDERR.equals(streamType)) {
-                        errorMessage[0] = new String(frame.getPayload());
-                        System.out.println("输出错误结果：" + errorMessage[0]);
+                        errorDockerMessage[0] = new String(frame.getPayload());
+                        System.out.println("输出错误结果：" + errorDockerMessage[0]);
                     } else {
-                        message[0] = new String(frame.getPayload());
-                        System.out.println("输出结果：" + message[0]);
+                        messageDocker[0] = new String(frame.getPayload());
+                        System.out.println("输出结果：" + messageDocker[0]);
                     }
                     super.onNext(frame);
                 }
             };
 
-            final long[] maxMemory = {0L};
-
-            // 获取占用的内存
+            // 3.5、获取占用的内存
             StatsCmd statsCmd = dockerClient.statsCmd(containerId);
             ResultCallback<Statistics> statisticsResultCallback = statsCmd.exec(new ResultCallback<Statistics>() {
-
                 @Override
                 public void onNext(Statistics statistics) {
-                    System.out.println("内存占用：" + statistics.getMemoryStats().getUsage());
-                    Long memoryUsage = statistics.getMemoryStats().getUsage();
-                    if (memoryUsage != null) {
-                        maxMemory[0] = Math.max(memoryUsage, maxMemory[0]);
-                    }
-                }
-
-                @Override
-                public void close() throws IOException {
-
+                    Long usageMemory = statistics.getMemoryStats().getUsage();
+                    System.out.println("内存占用：" + usageMemory);
+                    maxMemory[0] = Math.max(usageMemory, maxMemory[0]);
                 }
 
                 @Override
@@ -173,26 +191,37 @@ public class JavaDockerCodeSandbox extends AbstractJavaCodeSandboxTemplate {
                 public void onComplete() {
 
                 }
+
+                @Override
+                public void close() throws IOException {
+
+                }
             });
             statsCmd.exec(statisticsResultCallback);
             try {
+                // 执行启动命令
+                // 开始前获取时间
                 stopWatch.start();
-                dockerClient.execStartCmd(execId).exec(execStartResultCallback).awaitCompletion(TIME_OUT, TimeUnit.MICROSECONDS);
+                dockerClient.execStartCmd(execId)
+                        .exec(execStartResultCallback)
+                        .awaitCompletion();
+                // 结束计时
                 stopWatch.stop();
+                // 获取总共时间
                 time = stopWatch.getLastTaskTimeMillis();
+                // 关闭统计
                 statsCmd.close();
             } catch (InterruptedException e) {
                 System.out.println("程序执行异常");
                 throw new RuntimeException(e);
             }
-            executeMessage.setMessage(message[0]);
-            executeMessage.setErrorMessage(errorMessage[0]);
-            executeMessage.setTime(time);
-            executeMessage.setMemory(maxMemory[0]);
-            executeMessageList.add(executeMessage);
+            System.out.println("耗时：" + time + " ms");
+            execDockerMessage.setMessage(messageDocker[0]);
+            execDockerMessage.setErrorMessage(errorDockerMessage[0]);
+            execDockerMessage.setTime(time);
+            execDockerMessage.setMemory(maxMemory[0]);
+            executeMessageList.add(execDockerMessage);
         }
         return executeMessageList;
     }
-
-
 }

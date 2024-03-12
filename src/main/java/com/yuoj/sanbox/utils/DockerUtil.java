@@ -17,7 +17,7 @@ import java.time.Duration;
 @Component
 public class DockerUtil {
     private final static String HOST = "tcp://101.42.24.207:2375";
-    private final static String API_VERSION = "1.41";
+    private final static String API_VERSION = "1.44";
 
     /**
      * 连接docker服务器

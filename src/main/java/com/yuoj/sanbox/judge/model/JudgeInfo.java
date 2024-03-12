@@ -1,6 +1,8 @@
 package com.yuoj.sanbox.judge.model;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * 判题信息(json数组)
@@ -10,6 +12,8 @@ import lombok.Data;
  */
 
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class JudgeInfo {
     /**
      * 程序执行信息
